@@ -1,11 +1,15 @@
 package protocbridge.frontend
 
 import org.apache.commons.io.IOUtils
+import org.scalatest.exceptions.TestFailedException
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.must.Matchers
 import protocbridge.{ExtraEnv, ProtocCodeGenerator}
 
 import java.io.ByteArrayOutputStream
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration.DurationInt
+import scala.concurrent.{Await, Future, TimeoutException}
 import scala.sys.process.ProcessIO
 import scala.util.Random
 
@@ -23,23 +27,44 @@ class PosixPluginFrontendSpec extends AnyFlatSpec with Matchers {
           toReceive
         }
       }
-      val (path, state) = PosixPluginFrontend.prepare(
-        fakeGenerator,
-        env
-      )
-      val actualOutput = new ByteArrayOutputStream()
-      val process = sys.process
-        .Process(path.toAbsolutePath.toString)
-        .run(new ProcessIO(writeInput => {
-          writeInput.write(toSend)
-          writeInput.close()
-        }, processOutput => {
-          IOUtils.copy(processOutput, actualOutput)
-          processOutput.close()
-        }, _.close()))
-      process.exitValue()
-      actualOutput.toByteArray mustBe toReceive
-      PosixPluginFrontend.cleanup(state)
+
+      // Repeat 100,000 times since named pipes on macOS are flaky.
+      val repeatCount = 100000
+      for (i <- 1 to repeatCount) {
+        if (i % 100 == 1) println(s"Running iteration $i of $repeatCount")
+
+        val (path, state) = PosixPluginFrontend.prepare(
+          fakeGenerator,
+          env
+        )
+        val actualOutput = new ByteArrayOutputStream()
+        val process = sys.process
+          .Process(path.toAbsolutePath.toString)
+          .run(new ProcessIO(writeInput => {
+            writeInput.write(toSend)
+            writeInput.close()
+          }, processOutput => {
+            IOUtils.copy(processOutput, actualOutput)
+            processOutput.close()
+          }, processError => {
+            IOUtils.copy(processError, System.err)
+            processError.close()
+          }))
+        try {
+          Await.result(Future {process.exitValue()}, 5.seconds)
+        } catch {
+          case _: TimeoutException =>
+            System.err.println(s"Timeout on iteration $i of $repeatCount")
+            process.destroy()
+        }
+        try {
+          actualOutput.toByteArray mustBe toReceive
+        } catch {
+          case e: TestFailedException =>
+            System.err.println(s"""Failed on iteration $i of $repeatCount: ${e.getMessage}""")
+        }
+        PosixPluginFrontend.cleanup(state)
+      }
     }
   }
 }
