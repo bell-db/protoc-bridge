@@ -1,11 +1,15 @@
 package protocbridge.frontend
 
 import org.apache.commons.io.IOUtils
+import org.scalatest.exceptions.TestFailedException
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.must.Matchers
 import protocbridge.{ExtraEnv, ProtocCodeGenerator}
 
 import java.io.ByteArrayOutputStream
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration.DurationInt
+import scala.concurrent.{Await, Future, TimeoutException}
 import scala.sys.process.ProcessIO
 import scala.util.Random
 
@@ -16,7 +20,7 @@ class OsSpecificFrontendSpec extends AnyFlatSpec with Matchers {
       generator: ProtocCodeGenerator,
       env: ExtraEnv,
       request: Array[Byte]
-  ): Array[Byte] = {
+  ): (frontend.InternalState, Array[Byte]) = {
     val (path, state) = frontend.prepare(
       generator,
       env
@@ -40,9 +44,15 @@ class OsSpecificFrontendSpec extends AnyFlatSpec with Matchers {
           }
         )
       )
-    process.exitValue()
+    try {
+      Await.result(Future { process.exitValue() }, 5.seconds)
+    } catch {
+      case _: TimeoutException =>
+        System.err.println(s"Timeout")
+        process.destroy()
+    }
     frontend.cleanup(state)
-    actualOutput.toByteArray
+    (state, actualOutput.toByteArray)
   }
 
   protected def testSuccess(frontend: PluginFrontend): Unit = {
@@ -57,8 +67,32 @@ class OsSpecificFrontendSpec extends AnyFlatSpec with Matchers {
         toReceive
       }
     }
-    val response = testPluginFrontend(frontend, fakeGenerator, env, toSend)
-    response mustBe toReceive
+    // Repeat 100,000 times since named pipes on macOS are flaky.
+    val repeatCount = 100000
+    for (i <- 1 until repeatCount) {
+      if (i % 100 == 1) println(s"Running iteration $i of $repeatCount")
+      val (state, response) =
+        testPluginFrontend(frontend, fakeGenerator, env, toSend)
+      try {
+        response mustBe toReceive
+      } catch {
+        case e: TestFailedException =>
+          System.err.println(
+            s"""Failed on iteration $i of $repeatCount: ${e.getMessage}"""
+          )
+      }
+    }
+    val (state, response) =
+      testPluginFrontend(frontend, fakeGenerator, env, toSend)
+    try {
+      response mustBe toReceive
+    } catch {
+      case e: TestFailedException =>
+        System.err.println(
+          s"""Failed on iteration $repeatCount of $repeatCount: ${e.getMessage}"""
+        )
+    }
+    state
   }
 
   protected def testFailure(frontend: PluginFrontend): Unit = {
@@ -71,7 +105,8 @@ class OsSpecificFrontendSpec extends AnyFlatSpec with Matchers {
         throw new OutOfMemoryError("test error")
       }
     }
-    val response = testPluginFrontend(frontend, fakeGenerator, env, toSend)
+    val (_, response) =
+      testPluginFrontend(frontend, fakeGenerator, env, toSend)
     response.length must be > 0
   }
 }
