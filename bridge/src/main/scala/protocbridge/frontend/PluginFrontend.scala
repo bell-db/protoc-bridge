@@ -2,8 +2,7 @@ package protocbridge.frontend
 
 import java.io.{ByteArrayOutputStream, InputStream, PrintWriter, StringWriter}
 import java.nio.file.{Files, Path}
-
-import protocbridge.{ProtocCodeGenerator, ExtraEnv}
+import protocbridge.{ExtraEnv, ProtocCodeGenerator}
 
 import scala.util.Try
 
@@ -133,8 +132,11 @@ object PluginFrontend {
 
   def isWindows: Boolean = sys.props("os.name").startsWith("Windows")
 
+  def isMac: Boolean = sys.props("os.name").startsWith("Mac") || sys.props("os.name").startsWith("Darwin")
+
   def newInstance: PluginFrontend = {
     if (isWindows) WindowsPluginFrontend
+    else if (isMac) MacPluginFrontend
     else PosixPluginFrontend
   }
 }
