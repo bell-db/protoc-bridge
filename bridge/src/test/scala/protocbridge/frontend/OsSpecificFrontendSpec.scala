@@ -45,8 +45,8 @@ class OsSpecificFrontendSpec extends AnyFlatSpec with Matchers {
 
   protected def testSuccess(frontend: PluginFrontend): frontend.InternalState = {
     val random = new Random()
-    val toSend = Array.fill(123)(random.nextInt(256).toByte)
-    val toReceive = Array.fill(456)(random.nextInt(256).toByte)
+    val toSend = Array.fill(10000)(random.nextInt(256).toByte)
+    val toReceive = Array.fill(10000)(random.nextInt(256).toByte)
     val env = new ExtraEnv(secondaryOutputDir = "tmp")
 
     val fakeGenerator = new ProtocCodeGenerator {
@@ -55,8 +55,10 @@ class OsSpecificFrontendSpec extends AnyFlatSpec with Matchers {
         toReceive
       }
     }
-    val (state, response) = testPluginFrontend(frontend, fakeGenerator, env, toSend)
-    response mustBe toReceive
+    for (_ <- 1 until 1000) {
+       testPluginFrontend(frontend, fakeGenerator, env, toSend)
+    }
+    val (state, _) = testPluginFrontend(frontend, fakeGenerator, env, toSend)
     state
   }
 

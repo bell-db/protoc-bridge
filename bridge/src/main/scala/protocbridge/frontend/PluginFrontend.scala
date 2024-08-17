@@ -137,6 +137,6 @@ object PluginFrontend {
   def newInstance: PluginFrontend = {
     if (isWindows) WindowsPluginFrontend
     else if (isMac) MacPluginFrontend
-    else PosixPluginFrontend
+    else MacPluginFrontend
   }
 }
