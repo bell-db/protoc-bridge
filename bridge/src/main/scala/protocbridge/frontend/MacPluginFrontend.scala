@@ -1,7 +1,7 @@
 package protocbridge.frontend
 
 import java.nio.file.attribute.PosixFilePermission
-import java.nio.file.{Files, Path}
+import java.nio.file.{Files, Path, Paths}
 import java.{util => ju}
 
 /** PluginFrontend for macOS.
@@ -15,14 +15,22 @@ import java.{util => ju}
 object MacPluginFrontend extends SocketBasedPluginFrontend {
 
   protected def createShellScript(port: Int): Path = {
+    val classPath =
+      Paths.get(getClass.getProtectionDomain.getCodeSource.getLocation.toURI)
+    val classPathBatchString = classPath.toString.replace("%", "%%")
     val shell = sys.env.getOrElse("PROTOCBRIDGE_SHELL", "/bin/sh")
     // We use 127.0.0.1 instead of localhost for the (very unlikely) case that localhost is missing from /etc/hosts.
     val scriptName = PluginFrontend.createTempFile(
       "",
       s"""|#!$shell
           |set -e
-          |nc 127.0.0.1 $port
-      """.stripMargin
+         |"${sys
+           .props(
+             "java.home"
+           )}/bin/java" -cp "$classPathBatchString" ${classOf[
+           BridgeApp
+         ].getName} $port
+        """.stripMargin
     )
     val perms = new ju.HashSet[PosixFilePermission]
     perms.add(PosixFilePermission.OWNER_EXECUTE)
