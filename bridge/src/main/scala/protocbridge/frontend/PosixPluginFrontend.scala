@@ -1,16 +1,14 @@
 package protocbridge.frontend
 
-import java.nio.file.{Files, Path}
+import protocbridge.{ExtraEnv, ProtocCodeGenerator}
+import sun.misc.{Signal, SignalHandler}
 
-import protocbridge.ProtocCodeGenerator
-import protocbridge.ExtraEnv
+import java.lang.management.ManagementFactory
 import java.nio.file.attribute.PosixFilePermission
-
-import scala.concurrent.blocking
-import scala.concurrent.Future
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.sys.process._
+import java.nio.file.{Files, Path}
+import java.nio.{ByteBuffer, ByteOrder}
 import java.{util => ju}
+import scala.sys.process._
 
 /** PluginFrontend for Unix-like systems (Linux, Mac, etc)
   *
@@ -32,49 +30,13 @@ object PosixPluginFrontend extends PluginFrontend {
     val tempDirPath = Files.createTempDirectory("protopipe-")
     val inputPipe = createPipe(tempDirPath, "input")
     val outputPipe = createPipe(tempDirPath, "output")
-    val sh = createShellScript(inputPipe, outputPipe)
+    val sh = createShellScript(getCurrentPid, inputPipe, outputPipe)
+    val internalState = InternalState(inputPipe, outputPipe, tempDirPath, sh)
 
-    Future {
-      blocking {
-        try {
-//          System.err.println("Files.newInputStream...")
-          val fsin = Files.newInputStream(inputPipe)
-//          System.err.println("PluginFrontend.runWithInputStream...")
-          val response = PluginFrontend.runWithInputStream(plugin, fsin, env)
-//          System.err.println("fsin.close...")
-          fsin.close()
+    Signal.handle(new Signal("USR1"), new SigUsr1Handler(internalState, plugin, env))
+//    System.err.println(s"[${LocalDateTime.now()}] Scala prepared")
 
-//          System.err.println("Files.newOutputStream...")
-          val fsout = Files.newOutputStream(outputPipe)
-//          System.err.println("fsout.write...")
-          fsout.write(response)
-//          System.err.println("fsout.close...")
-          fsout.close()
-
-//          System.err.println("blocking done.")
-        } catch {
-          case e: Throwable =>
-            // Handles rare exceptions not already gracefully handled in `runWithBytes`.
-            // Such exceptions aren't converted to `CodeGeneratorResponse`
-            // because `fsin` might not be fully consumed,
-            // therefore the plugin shell script might hang on `inputPipe`,
-            // and never consume `CodeGeneratorResponse`.
-            System.err.println("Exception occurred in PluginFrontend outside runWithBytes")
-            e.printStackTrace(System.err)
-            // Force an exit of the program.
-            // This is because the plugin shell script might hang on `inputPipe`,
-            // due to `fsin` not fully consumed.
-            // Or it might hang on `outputPipe`, due to `fsout` not closed.
-            // We can't simply close `fsout` here either,
-            // because `Files.newOutputStream(outputPipe)` will hang
-            // if `outputPipe` is not yet opened by the plugin shell script for reading.
-            // Therefore, the program might be stuck waiting for protoc,
-            // which in turn is waiting for the plugin shell script.
-            sys.exit(1)
-        }
-      }
-    }
-    (sh, InternalState(inputPipe, outputPipe, tempDirPath, sh))
+    (sh, internalState)
   }
 
   override def cleanup(state: InternalState): Unit = {
@@ -88,18 +50,37 @@ object PosixPluginFrontend extends PluginFrontend {
 
   private def createPipe(tempDirPath: Path, name: String): Path = {
     val pipeName = tempDirPath.resolve(name)
-    Seq("mkfifo", "-m", "600", pipeName.toAbsolutePath.toString).!!
     pipeName
   }
 
-  private def createShellScript(inputPipe: Path, outputPipe: Path): Path = {
+  private def createShellScript(serverPid: Int, inputPipe: Path, outputPipe: Path): Path = {
     val shell = sys.env.getOrElse("PROTOCBRIDGE_SHELL", "/bin/sh")
     val scriptName = PluginFrontend.createTempFile(
       "",
       s"""|#!$shell
           |set -e
-          |cat /dev/stdin > "$inputPipe"
-          |cat "$outputPipe"
+          |# gdate +"[%Y-%m-%dT%H:%M:%S.%6N] Sh write begin" >&2
+          |printf "%08x" $$$$ | xxd -r -p > "$inputPipe"
+          |cat /dev/stdin >> "$inputPipe"
+          |# gdate +"[%Y-%m-%dT%H:%M:%S.%6N] Sh write end" >&2
+          |sleep 1 &
+          |SLEEP_PID=$$!
+          |sigusr1_handler() {
+          |    # gdate +"[%Y-%m-%dT%H:%M:%S.%6N] Sh read begin" >&2
+          |    cat "$outputPipe"
+          |    # gdate +"[%Y-%m-%dT%H:%M:%S.%6N] Sh read end" >&2
+          |    kill "$$SLEEP_PID" 2>/dev/null
+          |    exit 0
+          |}
+          |trap 'sigusr1_handler' USR1
+          |kill -USR1 "$serverPid"
+          |# gdate +"[%Y-%m-%dT%H:%M:%S.%6N] Sh sent signal" >&2
+          |while true; do
+          |    wait "$$SLEEP_PID";
+          |    sleep 1 &
+          |    SLEEP_PID=$$!
+          |done
+          |# gdate +"[%Y-%m-%dT%H:%M:%S.%6N] Sh end" >&2
       """.stripMargin
     )
     val perms = new ju.HashSet[PosixFilePermission]
@@ -110,5 +91,38 @@ object PosixPluginFrontend extends PluginFrontend {
       perms
     )
     scriptName
+  }
+
+  private def getCurrentPid: Int = {
+    val jvmName = ManagementFactory.getRuntimeMXBean.getName
+    val pid = jvmName.split("@")(0)
+    pid.toInt
+  }
+
+  private class SigUsr1Handler(internalState: InternalState, plugin: ProtocCodeGenerator, env: ExtraEnv) extends SignalHandler {
+    override def handle(sig: Signal): Unit = {
+//      System.err.println(s"[${LocalDateTime.now()}] Scala read begin")
+      val fsin = Files.newInputStream(internalState.inputPipe)
+
+      val buffer = ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN)
+      val shPid = if (fsin.read(buffer.array()) == 4) {
+        buffer.getInt(0)
+      } else {
+        fsin.close()
+        throw new RuntimeException(s"Failed to read PID from pipe ${internalState.inputPipe}")
+      }
+
+      val response = PluginFrontend.runWithInputStream(plugin, fsin, env)
+      fsin.close()
+
+//      System.err.println(s"[${LocalDateTime.now()}] Scala write begin")
+      val fsout = Files.newOutputStream(internalState.outputPipe)
+      fsout.write(response)
+      fsout.close()
+//      System.err.println(s"[${LocalDateTime.now()}] Scala write end")
+
+      s"kill -USR1 $shPid".!!
+//      System.err.println(s"[${LocalDateTime.now()}] Scala sent signal")
+    }
   }
 }

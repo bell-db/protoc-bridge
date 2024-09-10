@@ -2,9 +2,9 @@ package protocbridge.frontend
 
 import java.io.{ByteArrayOutputStream, InputStream, PrintWriter, StringWriter}
 import java.nio.file.{Files, Path}
+import protocbridge.{ExtraEnv, ProtocCodeGenerator}
 
-import protocbridge.{ProtocCodeGenerator, ExtraEnv}
-
+import java.time.LocalDateTime
 import scala.util.Try
 
 /** A PluginFrontend instance provides a platform-dependent way for protoc to
@@ -122,6 +122,7 @@ object PluginFrontend {
   ): Array[Byte] = {
 //    System.err.println("readInputStreamToByteArrayWithEnv...")
     val bytes = readInputStreamToByteArrayWithEnv(fsin, env)
+//    System.err.println(s"[${LocalDateTime.now()}] Scala read end")
 //    System.err.println("runWithBytes...")
     runWithBytes(gen, bytes)
   }
