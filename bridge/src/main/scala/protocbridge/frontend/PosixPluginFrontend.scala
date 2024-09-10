@@ -63,23 +63,21 @@ object PosixPluginFrontend extends PluginFrontend {
           |printf "%08x" $$$$ | xxd -r -p > "$inputPipe"
           |cat /dev/stdin >> "$inputPipe"
           |# gdate +"[%Y-%m-%dT%H:%M:%S.%6N] Sh write end" >&2
-          |sleep 1 &
-          |SLEEP_PID=$$!
           |sigusr1_handler() {
           |    # gdate +"[%Y-%m-%dT%H:%M:%S.%6N] Sh read begin" >&2
           |    cat "$outputPipe"
           |    # gdate +"[%Y-%m-%dT%H:%M:%S.%6N] Sh read end" >&2
-          |    kill "$$SLEEP_PID" 2>/dev/null
-          |    exit 0
           |}
           |trap 'sigusr1_handler' USR1
           |kill -USR1 "$serverPid"
           |# gdate +"[%Y-%m-%dT%H:%M:%S.%6N] Sh sent signal" >&2
-          |while true; do
-          |    wait "$$SLEEP_PID";
-          |    sleep 1 &
-          |    SLEEP_PID=$$!
-          |done
+          |# Use `wait` background `sleep` instead of foreground `sleep`,
+          |# so that signals are handled immediately instead of after `sleep` finishes.
+          |sleep 1 & SLEEP_PID=$$!
+          |# Renew `sleep` if `sleep` expires before the signal (the `wait` result is 0).
+          |while wait "$$SLEEP_PID"; do sleep 1 & SLEEP_PID=$$!; done
+          |# Clean up `sleep` if `wait` exits due to the signal (the `wait` result is 128 + SIGUSR1 = 138).
+          |kill $$SLEEP_PID 2>/dev/null || true
           |# gdate +"[%Y-%m-%dT%H:%M:%S.%6N] Sh end" >&2
       """.stripMargin
     )
@@ -109,7 +107,7 @@ object PosixPluginFrontend extends PluginFrontend {
         buffer.getInt(0)
       } else {
         fsin.close()
-        throw new RuntimeException(s"Failed to read PID from pipe ${internalState.inputPipe}")
+        throw new RuntimeException(s"The first 4 bytes in '${internalState.inputPipe}' should be the PID of the shell script")
       }
 
       val response = PluginFrontend.runWithInputStream(plugin, fsin, env)
