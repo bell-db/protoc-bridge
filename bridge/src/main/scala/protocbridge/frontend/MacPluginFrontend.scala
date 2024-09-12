@@ -21,7 +21,8 @@ object MacPluginFrontend extends SocketBasedPluginFrontend {
       "",
       s"""|#!$shell
           |set -e
-          |nc 127.0.0.1 $port
+          |echo "Connecting to port $port..." >&2
+          |nc -vv 127.0.0.1 $port
       """.stripMargin
     )
     val perms = new ju.HashSet[PosixFilePermission]

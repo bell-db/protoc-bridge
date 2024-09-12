@@ -21,8 +21,10 @@ abstract class SocketBasedPluginFrontend extends PluginFrontend {
 
     Future {
       blocking {
+        System.err.println(s"Listening on port ${ss.getLocalPort}.")
         // Accept a single client connection from the shell script.
         val client = ss.accept()
+        System.err.println(s"Accepted client connection on port ${ss.getLocalPort} client ${client.getInetAddress}:${client.getPort}.")
         try {
           val response =
             PluginFrontend.runWithInputStream(
@@ -32,6 +34,7 @@ abstract class SocketBasedPluginFrontend extends PluginFrontend {
             )
           client.getOutputStream.write(response)
         } finally {
+          System.err.println(s"Closing client connection on port ${ss.getLocalPort} client ${client.getInetAddress}:${client.getPort}.")
           client.close()
         }
       }

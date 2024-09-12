@@ -79,7 +79,7 @@ class OsSpecificFrontendSpec extends AnyFlatSpec with Matchers {
         response mustBe toReceive
       } catch {
         case e: TestFailedException =>
-          System.err.println(s"""Failed on iteration $i of $repeatCount: ${e.getMessage}""")
+          System.err.println(s"""Failed on iteration $i of $repeatCount ($state): ${e.getMessage}""")
       }
     }
     val (state, response) =
@@ -88,7 +88,7 @@ class OsSpecificFrontendSpec extends AnyFlatSpec with Matchers {
       response mustBe toReceive
     } catch {
       case e: TestFailedException =>
-        System.err.println(s"""Failed on iteration $repeatCount of $repeatCount: ${e.getMessage}""")
+        System.err.println(s"""Failed on iteration $repeatCount of $repeatCount ($state): ${e.getMessage}""")
     }
     state
   }
