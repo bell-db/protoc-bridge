@@ -32,6 +32,7 @@ abstract class SocketBasedPluginFrontend extends PluginFrontend {
               client.getInputStream,
               env
             )
+          System.err.println("client.getOutputStream.write")
           client.getOutputStream.write(response)
         } finally {
           System.err.println(s"Closing client connection on port ${ss.getLocalPort} client ${client.getInetAddress}:${client.getPort}.")

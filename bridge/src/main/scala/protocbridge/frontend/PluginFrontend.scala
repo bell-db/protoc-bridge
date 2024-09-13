@@ -97,6 +97,7 @@ object PluginFrontend {
       count = fsin.read(buffer)
       if (count > 0) {
         b.write(buffer, 0, count)
+        System.err.println(s"Read $count bytes, total ${b.size()} bytes")
       }
     }
     val envBytes = env.toByteArrayAsField
@@ -109,7 +110,9 @@ object PluginFrontend {
       fsin: InputStream,
       env: ExtraEnv
   ): Array[Byte] = try {
+    System.err.println("readInputStreamToByteArrayWithEnv...")
     val bytes = readInputStreamToByteArrayWithEnv(fsin, env)
+    System.err.println("runWithBytes...")
     runWithBytes(gen, bytes)
   } catch {
     // This covers all Throwable including OutOfMemoryError, StackOverflowError, etc.
