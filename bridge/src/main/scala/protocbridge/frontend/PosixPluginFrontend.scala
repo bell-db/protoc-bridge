@@ -24,17 +24,24 @@ object PosixPluginFrontend extends PluginFrontend {
       plugin: ProtocCodeGenerator,
       env: ExtraEnv
   ): (Path, InternalState) = {
-    val ss = new ServerSocket(0)
+    val ss = new ServerSocket(0) // Bind to any available port.
     val sh = createShellScript(ss.getLocalPort)
 
     Future {
       blocking {
+        // Accept a single client connection from the shell script.
         val client = ss.accept()
-        val response =
-          PluginFrontend.runWithInputStream(plugin, client.getInputStream, env)
-        client.getOutputStream.write(response)
-        client.close()
-        ss.close()
+        try {
+          val response =
+            PluginFrontend.runWithInputStream(
+              plugin,
+              client.getInputStream,
+              env
+            )
+          client.getOutputStream.write(response)
+        } finally {
+          client.close()
+        }
       }
     }
 
