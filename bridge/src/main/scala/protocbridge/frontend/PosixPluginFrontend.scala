@@ -29,8 +29,12 @@ object PosixPluginFrontend extends PluginFrontend {
 
     Future {
       blocking {
+        System.err.println(s"Listening on port ${ss.getLocalPort}.")
         // Accept a single client connection from the shell script.
         val client = ss.accept()
+        System.err.println(
+          s"Accepted client connection on port ${ss.getLocalPort} client ${client.getInetAddress}:${client.getPort}."
+        )
         try {
           val response =
             PluginFrontend.runWithInputStream(
@@ -40,6 +44,9 @@ object PosixPluginFrontend extends PluginFrontend {
             )
           client.getOutputStream.write(response)
         } finally {
+          System.err.println(
+            s"Closing client connection on port ${ss.getLocalPort} client ${client.getInetAddress}:${client.getPort}."
+          )
           client.close()
         }
       }
@@ -62,7 +69,8 @@ object PosixPluginFrontend extends PluginFrontend {
       "",
       s"""|#!$shell
           |set -e
-          |nc 127.0.0.1 $port
+          |echo "Connecting to port $port..." >&2
+          |nc -vv 127.0.0.1 $port
     """.stripMargin
     )
     val perms = new ju.HashSet[PosixFilePermission]
