@@ -1,16 +1,13 @@
 package protocbridge.frontend
 
-import java.nio.file.{Files, Path}
+import protocbridge.{ExtraEnv, ProtocCodeGenerator}
 
-import protocbridge.ProtocCodeGenerator
-import protocbridge.ExtraEnv
+import java.net.ServerSocket
 import java.nio.file.attribute.PosixFilePermission
-
-import scala.concurrent.blocking
-import scala.concurrent.Future
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.sys.process._
+import java.nio.file.{Files, Path}
 import java.{util => ju}
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.{Future, blocking}
 
 /** PluginFrontend for Unix-like systems (Linux, Mac, etc)
   *
@@ -19,9 +16,7 @@ import java.{util => ju}
   */
 object PosixPluginFrontend extends PluginFrontend {
   case class InternalState(
-      inputPipe: Path,
-      outputPipe: Path,
-      tempDir: Path,
+      serverSocket: ServerSocket,
       shellScript: Path
   )
 
@@ -29,78 +24,39 @@ object PosixPluginFrontend extends PluginFrontend {
       plugin: ProtocCodeGenerator,
       env: ExtraEnv
   ): (Path, InternalState) = {
-    val tempDirPath = Files.createTempDirectory("protopipe-")
-    val inputPipe = createPipe(tempDirPath, "input")
-    val outputPipe = createPipe(tempDirPath, "output")
-    val sh = createShellScript(inputPipe, outputPipe)
+    val ss = new ServerSocket(0)
+    val sh = createShellScript(ss.getLocalPort)
 
     Future {
       blocking {
-        try {
-//          System.err.println("Files.newInputStream...")
-          val fsin = Files.newInputStream(inputPipe)
-//          System.err.println("PluginFrontend.runWithInputStream...")
-          val response = PluginFrontend.runWithInputStream(plugin, fsin, env)
-//          System.err.println("fsin.close...")
-          fsin.close()
-
-//          System.err.println("Files.newOutputStream...")
-          val fsout = Files.newOutputStream(outputPipe)
-//          System.err.println("fsout.write...")
-          fsout.write(response)
-//          System.err.println("fsout.close...")
-          fsout.close()
-
-//          System.err.println("blocking done.")
-        } catch {
-          case e: Throwable =>
-            // Handles rare exceptions not already gracefully handled in `runWithBytes`.
-            // Such exceptions aren't converted to `CodeGeneratorResponse`
-            // because `fsin` might not be fully consumed,
-            // therefore the plugin shell script might hang on `inputPipe`,
-            // and never consume `CodeGeneratorResponse`.
-            System.err.println("Exception occurred in PluginFrontend outside runWithBytes")
-            e.printStackTrace(System.err)
-            // Force an exit of the program.
-            // This is because the plugin shell script might hang on `inputPipe`,
-            // due to `fsin` not fully consumed.
-            // Or it might hang on `outputPipe`, due to `fsout` not closed.
-            // We can't simply close `fsout` here either,
-            // because `Files.newOutputStream(outputPipe)` will hang
-            // if `outputPipe` is not yet opened by the plugin shell script for reading.
-            // Therefore, the program might be stuck waiting for protoc,
-            // which in turn is waiting for the plugin shell script.
-            sys.exit(1)
-        }
+        val client = ss.accept()
+        val response =
+          PluginFrontend.runWithInputStream(plugin, client.getInputStream, env)
+        client.getOutputStream.write(response)
+        client.close()
+        ss.close()
       }
     }
-    (sh, InternalState(inputPipe, outputPipe, tempDirPath, sh))
+
+    (sh, InternalState(ss, sh))
   }
 
   override def cleanup(state: InternalState): Unit = {
+    state.serverSocket.close()
     if (sys.props.get("protocbridge.debug") != Some("1")) {
-      Files.delete(state.inputPipe)
-      Files.delete(state.outputPipe)
-      Files.delete(state.tempDir)
       Files.delete(state.shellScript)
     }
   }
 
-  private def createPipe(tempDirPath: Path, name: String): Path = {
-    val pipeName = tempDirPath.resolve(name)
-    Seq("mkfifo", "-m", "600", pipeName.toAbsolutePath.toString).!!
-    pipeName
-  }
-
-  private def createShellScript(inputPipe: Path, outputPipe: Path): Path = {
+  protected def createShellScript(port: Int): Path = {
     val shell = sys.env.getOrElse("PROTOCBRIDGE_SHELL", "/bin/sh")
+    // We use 127.0.0.1 instead of localhost for the (very unlikely) case that localhost is missing from /etc/hosts.
     val scriptName = PluginFrontend.createTempFile(
       "",
       s"""|#!$shell
           |set -e
-          |cat /dev/stdin > "$inputPipe"
-          |cat "$outputPipe"
-      """.stripMargin
+          |nc 127.0.0.1 $port
+    """.stripMargin
     )
     val perms = new ju.HashSet[PosixFilePermission]
     perms.add(PosixFilePermission.OWNER_EXECUTE)
