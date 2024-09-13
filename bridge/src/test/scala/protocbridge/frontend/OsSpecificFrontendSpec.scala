@@ -56,9 +56,11 @@ class OsSpecificFrontendSpec extends AnyFlatSpec with Matchers {
       }
     }
     for (_ <- 1 until 1000) {
-       testPluginFrontend(frontend, fakeGenerator, env, toSend)
+       val (_, actualOutput) = testPluginFrontend(frontend, fakeGenerator, env, toSend)
+       actualOutput mustBe toReceive
     }
-    val (state, _) = testPluginFrontend(frontend, fakeGenerator, env, toSend)
+    val (state, actualOutput) = testPluginFrontend(frontend, fakeGenerator, env, toSend)
+    actualOutput mustBe toReceive
     state
   }
 
