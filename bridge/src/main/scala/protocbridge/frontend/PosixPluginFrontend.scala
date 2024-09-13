@@ -42,6 +42,7 @@ object PosixPluginFrontend extends PluginFrontend {
               client.getInputStream,
               env
             )
+          System.err.println("client.getOutputStream.write...")
           client.getOutputStream.write(response)
         } finally {
           System.err.println(

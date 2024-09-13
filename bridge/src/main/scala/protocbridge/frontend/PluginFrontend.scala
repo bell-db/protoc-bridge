@@ -120,9 +120,9 @@ object PluginFrontend {
       fsin: InputStream,
       env: ExtraEnv
   ): Array[Byte] = {
-//    System.err.println("readInputStreamToByteArrayWithEnv...")
+    System.err.println("readInputStreamToByteArrayWithEnv...")
     val bytes = readInputStreamToByteArrayWithEnv(fsin, env)
-//    System.err.println("runWithBytes...")
+    System.err.println("runWithBytes...")
     runWithBytes(gen, bytes)
   }
 
