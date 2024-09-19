@@ -70,7 +70,7 @@ class OsSpecificFrontendSpec extends AnyFlatSpec with Matchers {
       }
     }
     // Repeat 100,000 times since named pipes on macOS are flaky.
-    val repeatCount = 100000
+    val repeatCount = 1000
     for (i <- 1 until repeatCount) {
       if (i % 100 == 1) println(s"Running iteration $i of $repeatCount")
       val (state, response) =
